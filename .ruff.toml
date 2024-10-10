@@ -1,0 +1,14 @@
+target-version = "py312"
+line-length = 100
+
+[lint]
+extend-select = [
+    "D",  # pydocstyle
+    "I",  # isort
+    "W",  # pycodestyle warnings
+    "E",  # pycodestyle errors
+]
+ignore = ["D100"]
+
+[lint.pydocstyle]
+convention = "pep257"
