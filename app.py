@@ -1,11 +1,13 @@
 import io
 import json
 import re
+from datetime import datetime
 from typing import Any, Callable
 
 import matplotlib as mpl
 import numpy as np
 import pandas as pd
+import plotly.express as px
 import requests
 import streamlit as st
 from pandas.api.types import is_numeric_dtype
@@ -99,7 +101,7 @@ def create_by_loop_summary_df(
         .stack()
         .unstack(level=0)
         .reset_index(level=1, drop=True)
-    )
+    )[file_labels["label"].to_list()]
     return summary_df.style.format(formatter or create_formatter(summary_df))
 
 
@@ -206,29 +208,47 @@ with st.expander("**File Upload and Labeling**", expanded=True):
             st.error("Labels must be unique.")
             st.stop()
 
+ts_pattern = r"(\d{2})-(\d{2})-(\d{4}) (\d{2}):(\d{2}):(\d{2})"
 query_pattern = r"AClient (\d+):Loop (\d+):Q(\d{2})"
-pattern = re.compile(rf".*{query_pattern}:\s+metrics:\s+(.*)")
+pattern = re.compile(rf"{ts_pattern}.*{query_pattern}:\s+([\w\s]+):\s+(.*)")
 
+start_times = {}
+end_times = {}
 rows = []
 for i, file in enumerate(all_files):
     file.seek(0)
     for line in file:
         if m := pattern.match(line.decode()):
-            client, loop, query, data = m.groups()
-            try:
-                data_parsed = json.loads(data.replace("'", '"'))
-            except json.JSONDecodeError:
-                data_parsed = {}
-
-            rows.append(
-                {
-                    "file": file_labels.iloc[i]["label"],
-                    "loop": int(loop),
-                    "query": int(query),
-                    "client": int(client),
-                    **data_parsed,
-                }
+            mm, dd, yyyy, h, m, s, client, loop, query, action, data = m.groups()
+            timestamp = datetime(
+                year=int(yyyy),
+                month=int(mm),
+                day=int(dd),
+                hour=int(h),
+                minute=int(m),
+                second=int(s),
             )
+            if (action := action.lower()) == "metrics":
+                try:
+                    data_parsed = json.loads(data.replace("'", '"'))
+                except json.JSONDecodeError:
+                    data_parsed = {}
+
+                rows.append(
+                    {
+                        "file": file_labels.iloc[i]["label"],
+                        "loop": int(loop),
+                        "query": int(query),
+                        "client": int(client),
+                        "start_time": start_times.get((file.name, loop, query, client)),
+                        "end_time": end_times.get((file.name, loop, query, client)),
+                        **data_parsed,
+                    }
+                )
+            elif action.startswith("started"):
+                start_times[(file.name, loop, query, client)] = timestamp
+            elif action.startswith("ended"):
+                end_times[(file.name, loop, query, client)] = timestamp
 
 df = convert_dtypes(pd.DataFrame(rows))
 df.set_index(["file", "loop", "query", "client"], inplace=True)
@@ -306,6 +326,7 @@ if len(file_labels) > 1:
             background_with_norm("RdYlGn_r", -100, 0, 100),
         )
         for col in df.columns
+        if col not in ["start_time", "end_time"]
     }
 
     comparison_col = st.selectbox("Comparison column", qbq_comparison_cols.keys())
@@ -329,6 +350,26 @@ if len(file_labels) > 1:
         width=800,
         height=820,
     )
+
+st.divider()
+st.header("Query Timeline")
+timeline_df = df[["start_time", "end_time"]]
+timeline_df["client"] = timeline_df.index.get_level_values("client").astype("string")
+timeline_df["query"] = timeline_df.index.get_level_values("query").astype("string")
+for name in timeline_df.index.get_level_values("file").unique():
+    st.subheader(name)
+    timeline_fig = px.timeline(
+        timeline_df.loc[name],
+        x_start="start_time",
+        x_end="end_time",
+        y="client",
+        color="query",
+        category_orders={"client": sorted(timeline_df.index.get_level_values("client").unique())},
+        color_discrete_map=dict(
+            zip(sorted(timeline_df["query"].unique()), px.colors.qualitative.Light24)
+        ),
+    )
+    st.plotly_chart(timeline_fig, use_container_width=True)
 
 st.divider()
 st.header("Raw Data")
