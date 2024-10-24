@@ -9,6 +9,7 @@ import pandas as pd
 import requests
 import streamlit as st
 from pandas.api.types import is_numeric_dtype
+from pandas.api.typing import NaTType
 from pandas.io.formats.style import Styler
 
 st.set_page_config(page_title="CH2 Log Parser", layout="wide")
@@ -31,8 +32,11 @@ def convert_dtypes(df: pd.DataFrame) -> pd.DataFrame:
     return new_df
 
 
-def td_format(td: pd.Timedelta) -> str:
+def td_format(td: pd.Timedelta | NaTType) -> str | None:
     """Format a timedelta object to a human-readable string."""
+    if pd.isna(td):
+        return
+
     td_ = td.round("ms").components
     s = f"{td_.hours:02}:{td_.minutes:02}:{td_.seconds:02}.{td_.milliseconds:03}"
     if td_.days:
@@ -201,13 +205,18 @@ for i, file in enumerate(all_files):
     for line in file:
         if m := pattern.match(line.decode()):
             client, loop, query, data = m.groups()
+            try:
+                data_parsed = json.loads(data.replace("'", '"'))
+            except json.JSONDecodeError:
+                data_parsed = {}
+
             rows.append(
                 {
                     "file": file_labels.iloc[i]["label"],
                     "loop": int(loop),
                     "query": int(query),
                     "client": int(client),
-                    **json.loads(data.replace("'", '"')),
+                    **data_parsed,
                 }
             )
 
@@ -287,7 +296,6 @@ if len(file_labels) > 1:
         .stack()
         .unstack(level=0)
         .reset_index(level=3, drop=True)[[file_A, file_B]]
-        .fillna(0)
     )
     qbq_df["diff"] = diff_func(qbq_df[file_A], qbq_df[file_B])
     qbq_formatter = create_formatter(qbq_df) | (
