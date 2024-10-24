@@ -32,7 +32,7 @@ def convert_dtypes(df: pd.DataFrame) -> pd.DataFrame:
     return new_df
 
 
-def td_format(td: pd.Timedelta | NaTType) -> str | None:
+def human_td_format(td: pd.Timedelta | NaTType) -> str | None:
     """Format a timedelta object to a human-readable string."""
     if pd.isna(td):
         return
@@ -44,12 +44,22 @@ def td_format(td: pd.Timedelta | NaTType) -> str | None:
     return s
 
 
+def seconds_td_format(td: pd.Timedelta | NaTType) -> str | None:
+    """Format a timedelta object as the total number of seconds."""
+    if not pd.isna(td):
+        return f"{td.total_seconds():.2f}"
+
+
 def create_formatter(df: pd.DataFrame) -> dict[str, Callable[[Any], str]]:
     """Create a dictionary of formatters for the dataframe."""
     formatter = {}
     for col, dtype in df.dtypes.items():
         if dtype == "timedelta64[ns]":
-            formatter[col] = td_format
+            formatter[col] = (
+                human_td_format
+                if st.session_state.get("duration_format", "HH:MM:SS") == "HH:MM:SS"
+                else seconds_td_format
+            )
         elif col.endswith("Ratio"):
             formatter[col] = lambda x: f"{x * 100:.2f}%"
         elif str(dtype).lower().startswith("int"):
@@ -226,13 +236,24 @@ df.set_index(["file", "loop", "query", "client"], inplace=True)
 st.header("Summary")
 st.warning("Values will not be accurate if # clients > 1", icon="⚠️")
 
+c1, c2, _ = st.columns([0.2, 0.2, 0.6])
+with c1:
+    time_field = st.radio(
+        "Field used for query time summaries:",
+        ["elapsedTime", "executionTime"],
+    )
+with c2:
+    st.session_state.duration_format = st.radio(
+        "Duration format:",
+        ["HH:MM:SS", "seconds"],
+    )
 
 create_summary_section(
     "Query performance",
     {
-        "Geo-mean query time (s)": create_by_loop_summary_df(df, {"elapsedTime": geo_mean}),
-        "Query set time": create_by_loop_summary_df(df, {"elapsedTime": "sum"}),
-        "QPH": create_by_loop_summary_df(df, {"elapsedTime": qph}),
+        "Geo-mean query time (s)": create_by_loop_summary_df(df, {time_field: geo_mean}),
+        "Query set time": create_by_loop_summary_df(df, {time_field: "sum"}),
+        "QPH": create_by_loop_summary_df(df, {time_field: qph}),
     },
 )
 
