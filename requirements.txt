@@ -3,3 +3,5 @@ numpy
 pandas
 requests
 streamlit>=1.39.0
+plotly
+nbformat>=4.2.0
